@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Palette sampled from the Alpha ERP dark theme */
+  :root {
+    --page: #141417;
+    --surface: #1C1C1E;
+    --surface-2: #232327;
+    --line: #3A3A3D;
+    --dots: #26262B;
+    --text: #D2E0EF;
+    --muted: #8C95A3;
+    --accent: #AFC1FF;      /* section headings */
+    --brand: #5361D6;       /* logo indigo */
+    --brand-hi: #6674EA;
+    --edge: #4C505B;
+    --ready: #5361D6;
+    --backend: #E0A43A;
+    --backend-soft: #2A2317;
+    --backend-text: #F2CB82;
+    --blocked: #E0566E;
+    --blocked-soft: #2B1A1F;
+    --blocked-text: #F4A7B5;
+    --ghost: #1C1C1E;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif;
+    color: var(--text);
+    background-color: var(--page);
+    background-image: radial-gradient(var(--dots) 1.1px, transparent 1.3px);
+    background-size: 24px 24px;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Top bar with breadcrumbs, like the ERP */
+  .bar {
+    position: fixed; top: 0; left: 0; right: 0; height: 52px; z-index: 5;
+    background: var(--surface); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 16px; padding: 0 24px;
+  }
+  .crumbs { display: flex; align-items: center; gap: 10px; font-size: 14px; color: #B7C0CC; margin: 0; padding: 0; list-style: none; }
+  .crumbs li + li::before { content: "›"; color: var(--muted); margin-inline-end: 10px; }
+  .crumbs li:last-child { color: var(--text); font-weight: 600; }
+  .bar .spacer { flex: 1; }
+  .bar .meta { font-size: 13px; color: var(--muted); margin: 0; }
+
+  /* Page heading */
+  .top {
+    position: fixed; left: 24px; top: 72px; z-index: 3;
+    max-width: min(620px, calc(100vw - 48px));
+    pointer-events: none;
+  }
+  .top > * { pointer-events: auto; }
+  h1 { font-size: 22px; line-height: 1.3; font-weight: 700; margin: 0 0 14px; color: var(--text); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    font: inherit; font-size: 14px; font-weight: 500; color: var(--text);
+    display: inline-flex; align-items: center; gap: 9px;
+    padding: 7px 13px 7px 11px; border-radius: var(--radius);
+    background: var(--surface); border: 1px solid var(--line); cursor: pointer;
+    transition: border-color .15s, opacity .15s;
+  }
+  .chip:hover { border-color: #55555A; }
+  .chip .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 22%, transparent); }
+  .chip .n { font-weight: 700; color: var(--accent); }
+  .chip[aria-pressed="false"] { opacity: .42; }
+  .chip:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .sample {
+    margin-top: 14px; font-size: 14px; line-height: 1.55; max-width: 460px;
+    background: rgba(83, 97, 214, .12); border: 1px solid rgba(175, 193, 255, .28);
+    color: var(--text); padding: 10px 14px; border-radius: var(--radius);
+  }
+  .sample code { font-size: 12.5px; color: var(--accent); background: rgba(175, 193, 255, .1); padding: 1px 6px; border-radius: 5px; }
+
+  /* Map */
+  #map { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  .edge { stroke: var(--edge); stroke-width: 1.6; fill: none; transition: stroke .15s, opacity .15s; }
+  .edge.rel { stroke-dasharray: 4 6; stroke-width: 1.3; opacity: .8; }
+  .edge.hot { stroke: var(--accent); stroke-width: 2.2; opacity: 1; }
+  .edge.dim { opacity: .1; }
+
+  .node { cursor: grab; outline: none; transition: opacity .15s; }
+  .node.dragging { cursor: grabbing; }
+  .node .inner { transform-box: fill-box; transform-origin: center; }
+  .node .ring { fill: none; stroke: var(--accent); stroke-width: 2; opacity: 0; transition: opacity .15s; }
+  .node:focus-visible .ring, .node.selected .ring { opacity: 1; }
+  .node .body { stroke-width: 2; }
+  .node text { pointer-events: none; font-family: inherit; }
+  .node .t { font-size: 13px; font-weight: 600; }
+  .node .sub { font-size: 11px; font-weight: 500; }
+  .node .halo { fill: var(--brand); opacity: .55; }
+  .node.ready .body { fill: url(#readyFill); stroke: var(--accent); stroke-opacity: .55; stroke-width: 1.5; }
+  .node.ready text { fill: #FFFFFF; }
+  .node.ready .sub { fill: #DCE3FF; }
+  .node.needs_backend .body { fill: var(--backend-soft); stroke: var(--backend); }
+  .node.needs_backend text { fill: var(--backend-text); }
+  .node.blocked .body { fill: var(--blocked-soft); stroke: var(--blocked); }
+  .node.blocked text { fill: var(--blocked-text); }
+  .node.external .body { fill: var(--surface); stroke: #5A5F66; stroke-dasharray: 3 4; stroke-width: 1.5; }
+  .node.external text { fill: var(--muted); }
+  .node.external .t { font-size: 11.5px; font-weight: 500; }
+  .node.dim { opacity: .14; }
+
+  @keyframes pop { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: scale(1); } }
+  .intro .node .inner { animation: pop .45s cubic-bezier(.2,.9,.3,1.2) both; animation-delay: var(--d, 0ms); }
+  @media (prefers-reduced-motion: reduce) {
+    .intro .node .inner { animation: none; }
+    .panel { transition: none !important; }
+  }
+
+  .empty {
+    position: fixed; inset: 0; display: grid; place-items: center; text-align: center;
+    color: var(--muted); font-size: 16px; padding: 24px; pointer-events: none;
+  }
+  [hidden] { display: none !important; }
+
+  /* Detail panel: styled like the ERP's edit page */
+  .panel {
+    position: fixed; top: 52px; right: 0; bottom: 0; z-index: 4;
+    width: min(420px, 100vw); background: var(--page);
+    border-left: 1px solid var(--line);
+    box-shadow: -24px 0 48px -30px rgba(0, 0, 0, .8);
+    transform: translateX(calc(100% + 70px)); visibility: hidden;
+    transition: transform .22s ease, visibility 0s linear .22s;
+    display: flex; flex-direction: column;
+  }
+  .panel.open { transform: none; visibility: visible; transition: transform .22s ease; }
+  .panel-scroll { overflow-y: auto; padding: 20px 20px 16px; flex: 1; scrollbar-color: var(--line) transparent; }
+  .panel .close {
+    position: absolute; top: 14px; right: 14px; width: 34px; height: 34px;
+    border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted);
+    font-size: 22px; line-height: 1; cursor: pointer;
+  }
+  .panel .close:hover { background: var(--surface); border-color: var(--line); color: var(--text); }
+  .where { font-size: 13px; color: #B7C0CC; margin: 0 44px 6px 0; }
+  .panel h2 { font-size: 21px; line-height: 1.35; font-weight: 700; margin: 0 44px 12px 0; }
+  .tags { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .pill { font-size: 13px; font-weight: 600; padding: 3px 11px; border-radius: 7px; border: 1px solid transparent; }
+  .pill.ready { background: var(--brand); color: #fff; }
+  .pill.needs_backend { background: var(--backend-soft); color: var(--backend-text); border-color: rgba(224, 164, 58, .45); }
+  .pill.blocked { background: var(--blocked-soft); color: var(--blocked-text); border-color: rgba(224, 86, 110, .45); }
+  .pill.external { background: var(--surface); color: var(--muted); border: 1px dashed #5A5F66; }
+  .tag { font-size: 13px; color: var(--muted); }
+  .summary { font-size: 15px; line-height: 1.6; margin: 0 0 16px; color: var(--text); }
+  .panel section {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 13px 15px 5px; margin-bottom: 10px;
+  }
+  .panel h3 { font-size: 15px; font-weight: 600; margin: 0 0 9px; color: var(--accent); }
+  .panel ul { margin: 0 0 8px; padding-inline-start: 18px; font-size: 14px; line-height: 1.55; }
+  .panel li { margin-bottom: 5px; }
+  .panel li::marker { color: var(--muted); }
+  .panel li.warn::marker { color: var(--blocked); }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+  .panel li code { background: var(--surface-2); border: 1px solid var(--line); color: var(--text); padding: 0 6px; border-radius: 5px; }
+  .panel p.none { font-size: 14px; color: var(--muted); margin: 0 0 9px; }
+  .panel a { color: var(--accent); text-underline-offset: 3px; }
+  .links { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
+  .link-chip {
+    font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+    border: 1px solid var(--line); background: var(--surface-2); color: var(--text);
+    padding: 4px 10px 4px 8px; border-radius: 8px; display: inline-flex; align-items: center; gap: 7px;
+  }
+  .link-chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--edge)); }
+  .link-chip:hover { border-color: #55555A; }
+  .actions { border-top: 1px solid var(--line); padding: 16px 20px 18px; background: var(--surface); }
+  .btn {
+    font: inherit; font-size: 15px; font-weight: 600; width: 100%;
+    padding: 11px 16px; border-radius: var(--radius); cursor: pointer; border: 1px solid transparent;
+    transition: background .15s, border-color .15s;
+  }
+  .btn.primary { background: var(--brand); color: #fff; box-shadow: 0 8px 24px -12px rgba(83, 97, 214, .9); }
+  .btn.primary:hover { background: var(--brand-hi); }
+  .btn.secondary { background: var(--surface-2); color: var(--text); border-color: var(--line); }
+  .btn.secondary:hover { border-color: #5A5F66; }
+  .hint { font-size: 13px; color: var(--muted); margin: 9px 0 0; line-height: 1.5; }
+  .hint code { color: var(--accent); }
+  .trello-link { display: inline-block; margin-top: 12px; font-size: 14px; font-weight: 500; color: var(--accent); }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; z-index: 6;
+    transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
+    background: var(--surface); color: var(--text); border: 1px solid var(--line);
+    font-size: 14px; padding: 10px 16px; border-radius: var(--radius);
+    box-shadow: 0 12px 32px -12px rgba(0, 0, 0, .8);
+    transition: opacity .2s, transform .2s; max-width: calc(100vw - 32px);
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+  .toast code { color: var(--accent); }
+
+  @media (max-width: 700px) {
+    .bar { padding: 0 16px; }
+    .bar .meta { display: none; }
+    .top { left: 16px; top: 66px; max-width: calc(100vw - 32px); }
+    h1 { font-size: 20px; margin-bottom: 10px; }
+    .panel {
+      top: auto; left: 0; width: 100%; height: 72vh;
+      border-left: 0; border-top: 1px solid var(--line); border-radius: 16px 16px 0 0;
+      transform: translateY(calc(100% + 70px));
+    }
+    .panel.open { transform: none; }
+  }
+</style>
+<!-- /triage writes this file. If it's missing, the map shows sample data. -->
+<script src="triage-data.js"></script>
+</head>
+<body>
+
+<nav class="bar" aria-label="Breadcrumb">
+  <ol class="crumbs"><li>Home</li><li>Trello</li><li>Card map</li></ol>
+  <span class="spacer"></span>
+  <p class="meta" id="meta"></p>
+</nav>
+
+<header class="top">
+  <h1>Cards assigned to you</h1>
+  <div class="chips" id="chips" role="group" aria-label="Show cards by status"></div>
+  <div class="sample" id="sample" hidden>
+    You're looking at sample cards. Run <code>/triage</code> in Claude Code, then refresh this page to see yours.
+  </div>
+</header>
+
+<svg id="map" role="img" aria-label="Map of Trello cards and how they depend on each other"></svg>
+<div class="empty" id="empty" hidden>No open cards are assigned to you. Run /triage again once new cards come in.</div>
+
+<aside class="panel" id="panel" aria-live="polite" aria-label="Card details">
+  <button class="close" id="close" aria-label="Close details">&times;</button>
+  <div class="panel-scroll" id="panelBody"></div>
+  <div class="actions" id="panelActions"></div>
+</aside>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+/* ---------- Sample data (used only when triage-data.js is missing) ---------- */
+const SAMPLE = {
+  generatedAt: new Date(Date.now() - 1000 * 60 * 42).toISOString(),
+  member: "you",
+  cards: [
+    { id: "SmpA01", name: "تعديل عرض السعر", url: "https://trello.com", board: "Alpha ERP", list: "To do", estimate: "M", status: "ready",
+      summary: "Edit page for a price quote: customer, line items, discounts, and totals.",
+      reasons: ["PUT /api/quotations/:id already exists in src/api/quotations.ts", "Figma frame “Quotations / Edit” is linked", "No open questions in the comments"],
+      backendNeeds: [], blockers: [], dependsOn: [], related: ["SmpA03"],
+      figma: { url: "https://www.figma.com", name: "Quotations / Edit" },
+      likelyFiles: ["src/pages/quotations/EditQuotation.tsx", "src/api/quotations.ts"] },
+    { id: "SmpA02", name: "Quote PDF preview", url: "https://trello.com", board: "Alpha ERP", list: "To do", estimate: "M", status: "needs_backend",
+      summary: "Preview and download a quote as a branded PDF from the edit page.",
+      reasons: ["Quote data comes from GET /api/quotations/:id, which exists", "Nothing in src/api generates or returns a PDF"],
+      backendNeeds: [{ method: "GET", endpoint: "/api/quotations/:id/pdf", note: "Not found in src/api or the OpenAPI spec" }],
+      blockers: [], dependsOn: ["SmpA01"], related: [],
+      figma: { url: "https://www.figma.com", name: "Quotations / PDF" },
+      likelyFiles: ["src/pages/quotations/QuotePdfPreview.tsx"] },
+    { id: "SmpA03", name: "قائمة العملاء", url: "https://trello.com", board: "Alpha ERP", list: "To do", estimate: "S", status: "ready",
+      summary: "Customers table with search, filters, and pagination.",
+      reasons: ["GET /api/customers supports search and paging", "The data table component already exists"],
+      backendNeeds: [], blockers: [], dependsOn: [], related: [],
+      figma: { url: "https://www.figma.com", name: "Customers / List" },
+      likelyFiles: ["src/pages/customers/CustomersList.tsx"] },
+    { id: "SmpA04", name: "Convert quote to invoice", url: "https://trello.com", board: "Alpha ERP", list: "Backlog", estimate: "M", status: "blocked",
+      summary: "One click turns an accepted quote into a draft invoice.",
+      reasons: ["The design is ready"],
+      backendNeeds: [{ method: "POST", endpoint: "/api/quotations/:id/convert", note: "Part of the Invoices API card" }],
+      blockers: [{ type: "card", detail: "Waiting on “Invoices API” (Backend, In progress)", cardId: "SmpX01" }],
+      dependsOn: ["SmpX01"], related: [],
+      figma: { url: "https://www.figma.com", name: "Quotations / Convert" },
+      likelyFiles: ["src/pages/quotations/ConvertToInvoice.tsx"] },
+    { id: "SmpA05", name: "المفضلة في القائمة الجانبية", url: "https://trello.com", board: "Alpha ERP", list: "To do", estimate: "S", status: "blocked",
+      summary: "Pin pages to a Favorites group in the sidebar.",
+      reasons: ["The sidebar component supports custom groups"],
+      backendNeeds: [],
+      blockers: [{ type: "design", detail: "No Figma link on the card" },
+                 { type: "question", detail: "Rana asked on Sep 8 whether favorites sync across devices. No reply yet." }],
+      dependsOn: [], related: [], figma: null,
+      likelyFiles: ["src/layout/Sidebar.tsx"] },
+    { id: "SmpA06", name: "Notifications center", url: "https://trello.com", board: "Alpha ERP", list: "To do", estimate: "L", status: "needs_backend",
+      summary: "Bell icon with unread count and a panel of recent notifications.",
+      reasons: ["No notifications client exists in src/api"],
+      backendNeeds: [{ method: "GET", endpoint: "/api/notifications", note: "Needs pagination and unread count" },
+                     { method: "PATCH", endpoint: "/api/notifications/:id/read" }],
+      blockers: [], dependsOn: [], related: [],
+      figma: { url: "https://www.figma.com", name: "Header / Notifications" },
+      likelyFiles: ["src/layout/NotificationsMenu.tsx"] },
+    { id: "SmpA07", name: "Empty state for quotes", url: "https://trello.com", board: "Alpha ERP", list: "To do", estimate: "S", status: "ready",
+      summary: "Illustration, one line of copy, and a “New quote” button.",
+      reasons: ["No new data needed", "Figma frame is linked"],
+      backendNeeds: [], blockers: [], dependsOn: [], related: [],
+      figma: { url: "https://www.figma.com", name: "Quotations / Empty" },
+      likelyFiles: ["src/pages/quotations/QuotationsList.tsx"] },
+    { id: "SmpA08", name: "Global search", url: "https://trello.com", board: "Alpha ERP", list: "To do", estimate: "M", status: "ready",
+      summary: "Sidebar search across customers, quotes, and invoices.",
+      reasons: ["GET /api/search exists and returns grouped results", "The search field already exists in the sidebar"],
+      backendNeeds: [], blockers: [], dependsOn: [], related: [],
+      figma: { url: "https://www.figma.com", name: "Sidebar / Search" },
+      likelyFiles: ["src/layout/SidebarSearch.tsx", "src/api/search.ts"] },
+    { id: "SmpA09", name: "Recent searches", url: "https://trello.com", board: "Alpha ERP", list: "Backlog", estimate: "S", status: "blocked",
+      summary: "Show the last five searches when the search field is focused.",
+      reasons: ["Reads from the global search state"],
+      backendNeeds: [],
+      blockers: [{ type: "card", detail: "Builds on “Global search” (your card, not started)", cardId: "SmpA08" }],
+      dependsOn: ["SmpA08"], related: [],
+      figma: { url: "https://www.figma.com", name: "Sidebar / Recent" },
+      likelyFiles: ["src/layout/SidebarSearch.tsx"] }
+  ],
+  external: [
+    { id: "SmpX01", name: "Invoices API", url: "https://trello.com", board: "Backend", list: "In progress", assignee: "Omar" }
+  ]
+};
+
+/* ---------- Setup ---------- */
+const IS_SAMPLE = !window.TRIAGE_DATA;
+const DATA = window.TRIAGE_DATA || SAMPLE;
+
+const STATUS = {
+  ready:         { label: "Ready to build", color: "var(--ready)" },
+  needs_backend: { label: "Needs backend",  color: "var(--backend)" },
+  blocked:       { label: "Blocked",        color: "var(--blocked)" },
+  external:      { label: "Not yours",      color: "var(--edge)" }
+};
+const ORDER = ["ready", "needs_backend", "blocked"];
+
+const esc = s => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+const isRTL = str => /[\u0590-\u08FF\uFB1D-\uFEFC]/.test(str || "");
+const safeUrl = u => /^https?:\/\//i.test(u || "") ? u : null;
+
+const mine = (DATA.cards || []).map(c => ({ ...c, kind: "mine", status: STATUS[c.status] ? c.status : "blocked" }));
+const external = (DATA.external || []).map(c => ({ ...c, kind: "external", status: "external" }));
+const byId = new Map([...mine, ...external].map(c => [c.id, c]));
+
+// Edges: prerequisite -> dependent ("dep"), and undirected "rel"
+const edges = [];
+const relSeen = new Set();
+mine.forEach(c => {
+  (c.dependsOn || []).forEach(p => { if (byId.has(p) && p !== c.id) edges.push({ s: p, t: c.id, type: "dep" }); });
+  (c.related || []).forEach(r => {
+    const key = [c.id, r].sort().join("|");
+    if (byId.has(r) && r !== c.id && !relSeen.has(key)) { relSeen.add(key); edges.push({ s: c.id, t: r, type: "rel" }); }
+  });
+});
+const unlocks = new Map();
+edges.filter(e => e.type === "dep").forEach(e => {
+  if (!unlocks.has(e.s)) unlocks.set(e.s, []);
+  unlocks.get(e.s).push(e.t);
+});
+
+/* ---------- Header ---------- */
+function relTime(iso) {
+  const t = Date.parse(iso); if (!t) return "";
+  const m = Math.round((Date.now() - t) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60); if (h < 24) return `${h} h ago`;
+  const d = Math.round(h / 24); return `${d} day${d > 1 ? "s" : ""} ago`;
+}
+document.getElementById("meta").textContent =
+  `${mine.length} card${mine.length === 1 ? "" : "s"} for ${DATA.member || "you"}` +
+  (DATA.generatedAt ? `, triaged ${relTime(DATA.generatedAt)}` : "");
+document.getElementById("sample").hidden = !IS_SAMPLE;
+
+const visible = new Set(ORDER);
+const chipsEl = document.getElementById("chips");
+ORDER.forEach(s => {
+  const n = mine.filter(c => c.status === s).length;
+  const b = document.createElement("button");
+  b.className = "chip"; b.type = "button";
+  b.style.setProperty("--c", STATUS[s].color);
+  b.setAttribute("aria-pressed", "true");
+  b.innerHTML = `<span class="dot"></span>${STATUS[s].label} <span class="n">${n}</span>`;
+  b.addEventListener("click", () => {
+    if (visible.has(s)) visible.delete(s); else visible.add(s);
+    b.setAttribute("aria-pressed", String(visible.has(s)));
+    applyDim();
+  });
+  chipsEl.appendChild(b);
+});
+
+/* ---------- Layout (simple force simulation) ---------- */
+// Wide screens: status groups run left to right. Narrow screens: top to bottom.
+const VERTICAL = window.innerWidth < 700;
+const W = VERTICAL ? 560 : 1200, H = VERTICAL ? 1050 : 760;
+const home = n => VERTICAL
+  ? { x: W / 2, y: H * COL[n.c ? n.c.status : n.status] }
+  : { x: W * COL[n.c ? n.c.status : n.status], y: H / 2 };
+const COL = { ready: 0.2, needs_backend: 0.5, blocked: 0.78, external: 0.95 };
+const nodes = [...byId.values()].map((c, i) => {
+  const u = (unlocks.get(c.id) || []).length;
+  const r = c.kind === "external" ? 46 : 55 + 7 * Math.min(u, 4);
+  // deterministic jitter so the layout is stable between refreshes
+  const seed = [...c.id].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) % 9973, 7);
+  return {
+    id: c.id, c, r,
+    x: home(c).x + (VERTICAL ? ((seed * 7) % 300) - 150 : (seed % 120) - 60),
+    y: home(c).y + (VERTICAL ? (seed % 120) - 60 : ((seed * 7) % 400) - 200),
+    vx: 0, vy: 0, fixed: false
+  };
+});
+const nodeById = new Map(nodes.map(n => [n.id, n]));
+
+function tick(alpha) {
+  const N = nodes.length;
+  for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+    const a = nodes[i], b = nodes[j];
+    let dx = b.x - a.x, dy = b.y - a.y;
+    let d = Math.hypot(dx, dy) || 0.01;
+    const rep = 5200 * alpha / (d * d);
+    const ux = dx / d, uy = dy / d;
+    a.vx -= ux * rep; a.vy -= uy * rep; b.vx += ux * rep; b.vy += uy * rep;
+    const min = a.r + b.r + 24;
+    if (d < min) {
+      const push = (min - d) / 2;
+      if (!a.fixed) { a.x -= ux * push; a.y -= uy * push; }
+      if (!b.fixed) { b.x += ux * push; b.y += uy * push; }
+    }
+  }
+  edges.forEach(e => {
+    const a = nodeById.get(e.s), b = nodeById.get(e.t);
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01;
+    const target = a.r + b.r + (e.type === "dep" ? 70 : 110);
+    const f = (d - target) * (e.type === "dep" ? 0.05 : 0.02) * alpha;
+    const ux = dx / d, uy = dy / d;
+    a.vx += ux * f; a.vy += uy * f; b.vx -= ux * f; b.vy -= uy * f;
+  });
+  // keep bubbles off lines they aren't part of
+  edges.forEach(e => {
+    const a = nodeById.get(e.s), b = nodeById.get(e.t);
+    const sx = b.x - a.x, sy = b.y - a.y, len2 = sx * sx + sy * sy || 1;
+    nodes.forEach(n => {
+      if (n === a || n === b) return;
+      const t = Math.max(0, Math.min(1, ((n.x - a.x) * sx + (n.y - a.y) * sy) / len2));
+      const px = a.x + sx * t, py = a.y + sy * t;
+      let dx = n.x - px, dy = n.y - py, d = Math.hypot(dx, dy);
+      const min = n.r + 22;
+      if (d < min) {
+        if (d < 0.01) { dx = -sy; dy = sx; d = Math.hypot(dx, dy) || 1; }
+        const push = (min - d) * 0.35 * alpha;
+        if (!n.fixed) { n.vx += dx / d * push; n.vy += dy / d * push; }
+        a.vx -= dx / d * push * 0.3; a.vy -= dy / d * push * 0.3;
+        b.vx -= dx / d * push * 0.3; b.vy -= dy / d * push * 0.3;
+      }
+    });
+  });
+  nodes.forEach(n => {
+    const h = home(n);
+    n.vx += (h.x - n.x) * (VERTICAL ? 0.004 : 0.012) * alpha;
+    n.vy += (h.y - n.y) * (VERTICAL ? 0.012 : 0.006) * alpha;
+    n.vx *= 0.55; n.vy *= 0.55;
+    if (!n.fixed) { n.x += n.vx; n.y += n.vy; }
+  });
+}
+for (let k = 0; k < 520; k++) tick(Math.max(0.03, 1 - k / 460));
+
+/* ---------- Render ---------- */
+const NS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("map");
+const mk = (tag, attrs = {}, parent) => {
+  const el = document.createElementNS(NS, tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(el);
+  return el;
+};
+
+const defs = mk("defs", {}, svg);
+[["arrow", "var(--edge)"], ["arrowHot", "var(--accent)"]].forEach(([id, col]) => {
+  const m = mk("marker", { id, viewBox: "0 0 10 10", refX: "8", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" }, defs);
+  mk("path", { d: "M0,1 L9,5 L0,9 z", style: `fill:${col}` }, m);
+});
+// Ready bubbles: indigo gradient like the logo, with a soft glow behind
+const grad = mk("radialGradient", { id: "readyFill", cx: "35%", cy: "30%", r: "80%" }, defs);
+mk("stop", { offset: "0%", "stop-color": "#7482F2" }, grad);
+mk("stop", { offset: "100%", "stop-color": "#4250C4" }, grad);
+const glow = mk("filter", { id: "glow", x: "-60%", y: "-60%", width: "220%", height: "220%" }, defs);
+mk("feGaussianBlur", { stdDeviation: "14" }, glow);
+
+const gEdges = mk("g", {}, svg);
+const gNodes = mk("g", {}, svg);
+
+edges.forEach(e => {
+  e.el = mk("line", { class: `edge ${e.type}` }, gEdges);
+  if (e.type === "dep") e.el.setAttribute("marker-end", "url(#arrow)");
+});
+
+function wrap(text, maxChars, maxLines) {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  const lines = []; let cur = "";
+  words.forEach(w => {
+    if (!cur) cur = w;
+    else if ((cur + " " + w).length <= maxChars) cur += " " + w;
+    else { lines.push(cur); cur = w; }
+  });
+  if (cur) lines.push(cur);
+  if (lines.length > maxLines) {
+    const kept = lines.slice(0, maxLines);
+    kept[maxLines - 1] = kept[maxLines - 1].replace(/.{0,2}$/, "") + "…";
+    return kept;
+  }
+  return lines;
+}
+
+nodes.forEach((n, i) => {
+  const c = n.c, ext = c.kind === "external";
+  const g = mk("g", { class: `node ${c.status}`, tabindex: "0", role: "button",
+    "aria-label": `${c.name}. ${STATUS[c.status].label}.` }, gNodes);
+  g.style.setProperty("--d", `${i * 35}ms`);
+  const inner = mk("g", { class: "inner" }, g);
+  if (c.status === "ready") mk("circle", { class: "halo", r: n.r - 2, filter: "url(#glow)" }, inner);
+  mk("circle", { class: "ring", r: n.r + 7 }, inner);
+  mk("circle", { class: "body", r: n.r }, inner);
+
+  const u = (unlocks.get(c.id) || []).length;
+  const sub = ext ? (c.assignee ? `${c.assignee}’s card` : "not yours")
+                  : (u ? `unlocks ${u}` : "");
+  const lines = wrap(c.name, ext ? 12 : Math.floor(n.r / 4.6), ext ? 2 : 3);
+  const lh = ext ? 13 : 15;
+  const total = lines.length * lh + (sub ? 14 : 0);
+  let y = -total / 2 + lh * 0.75;
+  lines.forEach(line => {
+    const t = mk("text", { class: "t", "text-anchor": "middle", y: y.toFixed(1) }, inner);
+    if (isRTL(line)) t.setAttribute("direction", "rtl");
+    t.textContent = line; y += lh;
+  });
+  if (sub) {
+    const s = mk("text", { class: "sub", "text-anchor": "middle", y: (y + 1).toFixed(1), opacity: ".85" }, inner);
+    s.textContent = sub;
+  }
+  n.el = g;
+  bindNode(n);
+});
+
+function draw() {
+  nodes.forEach(n => n.el.setAttribute("transform", `translate(${n.x.toFixed(1)},${n.y.toFixed(1)})`));
+  edges.forEach(e => {
+    const a = nodeById.get(e.s), b = nodeById.get(e.t);
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 0.01;
+    const ux = dx / d, uy = dy / d;
+    const gap = e.type === "dep" ? 5 : 2;
+    e.el.setAttribute("x1", (a.x + ux * (a.r + 2)).toFixed(1));
+    e.el.setAttribute("y1", (a.y + uy * (a.r + 2)).toFixed(1));
+    e.el.setAttribute("x2", (b.x - ux * (b.r + gap)).toFixed(1));
+    e.el.setAttribute("y2", (b.y - uy * (b.r + gap)).toFixed(1));
+  });
+}
+
+function fit() {
+  if (!nodes.length) return;
+  const pad = 50;
+  let topRoom = 210;
+  if (VERTICAL) {
+    // On phones, start the map below the header instead of under it.
+    const hb = Math.ceil(document.querySelector(".top").getBoundingClientRect().bottom) + 8;
+    svg.style.top = hb + "px";
+    svg.style.height = `calc(100% - ${hb}px)`;
+    topRoom = 0;
+  }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  nodes.forEach(n => { x0 = Math.min(x0, n.x - n.r); y0 = Math.min(y0, n.y - n.r); x1 = Math.max(x1, n.x + n.r); y1 = Math.max(y1, n.y + n.r); });
+  svg.setAttribute("viewBox", `${x0 - pad} ${y0 - pad - topRoom} ${x1 - x0 + pad * 2} ${y1 - y0 + pad * 2 + topRoom}`);
+}
+
+if (!mine.length) document.getElementById("empty").hidden = false;
+draw(); fit();
+document.body.classList.add("intro");
+setTimeout(() => document.body.classList.remove("intro"), 1200 + nodes.length * 35);
+
+/* ---------- Interaction ---------- */
+let selected = null;
+
+function svgPoint(evt) {
+  const p = svg.createSVGPoint(); p.x = evt.clientX; p.y = evt.clientY;
+  return p.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+function bindNode(n) {
+  let start = null, moved = false;
+  n.el.addEventListener("pointerdown", e => {
+    e.stopPropagation();
+    n.el.setPointerCapture(e.pointerId);
+    start = { cx: e.clientX, cy: e.clientY }; moved = false;
+  });
+  n.el.addEventListener("pointermove", e => {
+    if (!start) return;
+    if (!moved && Math.hypot(e.clientX - start.cx, e.clientY - start.cy) < 4) return;
+    moved = true; n.fixed = true; n.el.classList.add("dragging");
+    const p = svgPoint(e); n.x = p.x; n.y = p.y;
+    for (let k = 0; k < 3; k++) tick(0.25);
+    draw();
+  });
+  const end = () => {
+    if (!start) return;
+    n.el.classList.remove("dragging"); n.fixed = false;
+    if (!moved) select(n.id);
+    start = null;
+  };
+  n.el.addEventListener("pointerup", end);
+  n.el.addEventListener("pointercancel", () => { start = null; n.fixed = false; n.el.classList.remove("dragging"); });
+  n.el.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(n.id); }
+  });
+}
+
+svg.addEventListener("pointerdown", () => { if (selected) closePanel(); });
+document.getElementById("close").addEventListener("click", closePanel);
+document.addEventListener("keydown", e => { if (e.key === "Escape" && selected) closePanel(); });
+
+function applyDim() {
+  nodes.forEach(n => {
+    let show;
+    if (n.c.kind === "external") {
+      show = mine.some(c => (c.dependsOn || []).includes(n.id) && visible.has(c.status));
+    } else show = visible.has(n.c.status);
+    n.el.classList.toggle("dim", !show);
+  });
+  edges.forEach(e => {
+    const a = nodeById.get(e.s), b = nodeById.get(e.t);
+    const hot = selected && (e.s === selected || e.t === selected);
+    e.el.classList.toggle("hot", !!hot);
+    e.el.classList.toggle("dim", a.el.classList.contains("dim") || b.el.classList.contains("dim"));
+    if (e.type === "dep") e.el.setAttribute("marker-end", hot ? "url(#arrowHot)" : "url(#arrow)");
+  });
+}
+
+function linkChips(ids) {
+  return `<div class="links">${ids.filter(id => byId.has(id)).map(id => {
+    const c = byId.get(id);
+    return `<button type="button" class="link-chip" data-go="${esc(id)}" style="--c:${STATUS[c.status].color}" dir="auto">${esc(c.name)}</button>`;
+  }).join("")}</div>`;
+}
+
+function select(id) {
+  selected = id;
+  nodes.forEach(n => n.el.classList.toggle("selected", n.id === id));
+  applyDim();
+  const c = byId.get(id);
+  const body = document.getElementById("panelBody");
+  const actions = document.getElementById("panelActions");
+  const trello = safeUrl(c.url);
+  const where = [c.list && `${c.list}`, c.board && `on ${c.board}`].filter(Boolean).join(" ");
+
+  if (c.kind === "external") {
+    const blocks = mine.filter(m => (m.dependsOn || []).includes(c.id)).map(m => m.id);
+    body.innerHTML = `
+      <p class="where">${esc(where)}</p>
+      <h2 dir="auto">${esc(c.name)}</h2>
+      <div class="tags"><span class="pill external">Not assigned to you</span>${c.assignee ? `<span class="tag">Assigned to ${esc(c.assignee)}</span>` : ""}</div>
+      <section><h3>Your cards waiting on this</h3>${blocks.length ? linkChips(blocks) : `<p class="none">None</p>`}</section>`;
+    actions.innerHTML = trello ? `<a class="btn secondary" style="display:block;text-align:center;text-decoration:none" href="${esc(trello)}" target="_blank" rel="noopener">Open in Trello</a>` : "";
+  } else {
+    const u = unlocks.get(c.id) || [];
+    const reasonsHead = c.status === "ready" ? "Why it’s ready" : "What Claude found";
+    const sec = (title, inner) => `<section><h3>${title}</h3>${inner}</section>`;
+    const list = (items, cls = "") => `<ul>${items.map(i => `<li class="${cls}" dir="auto">${i}</li>`).join("")}</ul>`;
+
+    let html = `
+      <p class="where">${esc(where)}</p>
+      <h2 dir="auto">${esc(c.name)}</h2>
+      <div class="tags"><span class="pill ${c.status}">${STATUS[c.status].label}</span>
+        ${c.estimate ? `<span class="tag">Size ${esc(c.estimate)}</span>` : ""}
+        ${c.due ? `<span class="tag">Due ${esc(new Date(c.due).toLocaleDateString())}</span>` : ""}</div>
+      ${c.summary ? `<p class="summary" dir="auto">${esc(c.summary)}</p>` : ""}`;
+    if ((c.blockers || []).length)
+      html += sec("What’s blocking it", list(c.blockers.map(b => esc(b.detail)), "warn"));
+    if ((c.backendNeeds || []).length)
+      html += sec("Needs from backend", list(c.backendNeeds.map(b =>
+        `<code>${esc([b.method, b.endpoint].filter(Boolean).join(" "))}</code>${b.note ? ` ${esc(b.note)}` : ""}`)));
+    if ((c.reasons || []).length) html += sec(reasonsHead, list(c.reasons.map(esc)));
+    const fig = c.figma && safeUrl(c.figma.url);
+    html += sec("Design", fig
+      ? `<p class="none" style="color:var(--ink)"><a href="${esc(fig)}" target="_blank" rel="noopener" dir="auto">${esc(c.figma.name || "Open in Figma")}</a></p>`
+      : `<p class="none">No design linked</p>`);
+    if ((c.dependsOn || []).length) html += sec("Depends on", linkChips(c.dependsOn));
+    if (u.length) html += sec(`Unlocks ${u.length} card${u.length > 1 ? "s" : ""}`, linkChips(u));
+    if ((c.related || []).length) html += sec("Related", linkChips(c.related));
+    if ((c.likelyFiles || []).length) html += sec("Likely files", list(c.likelyFiles.map(f => `<code>${esc(f)}</code>`)));
+    body.innerHTML = html;
+
+    const cmd = `/work-card ${c.id}`;
+    const ready = c.status === "ready";
+    actions.innerHTML = `
+      <button type="button" class="btn ${ready ? "primary" : "secondary"}" id="startBtn">${ready ? "Start working" : "Start anyway"}</button>
+      <p class="hint">Copies <code>${esc(cmd)}</code>. Paste it into Claude Code.${ready ? "" : " Claude will show what’s still open and ask before continuing."}</p>
+      ${trello ? `<a class="trello-link" href="${esc(trello)}" target="_blank" rel="noopener">Open in Trello</a>` : ""}`;
+    document.getElementById("startBtn").addEventListener("click", async () => {
+      const ok = await copy(cmd);
+      toast(ok ? `Copied <code>${esc(cmd)}</code>. Paste it into Claude Code.` : `Copy this into Claude Code: <code>${esc(cmd)}</code>`);
+    });
+  }
+  body.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => select(b.dataset.go)));
+  body.scrollTop = 0;
+  document.getElementById("panel").classList.add("open");
+}
+
+function closePanel() {
+  selected = null;
+  nodes.forEach(n => n.el.classList.remove("selected"));
+  applyDim();
+  document.getElementById("panel").classList.remove("open");
+}
+
+async function copy(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch (_) {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    let ok = false; try { ok = document.execCommand("copy"); } catch (_) {}
+    ta.remove(); return ok;
+  }
+}
+
+let toastTimer;
+function toast(html) {
+  const t = document.getElementById("toast");
+  t.innerHTML = html; t.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("show"), 3200);
+}
+
+window.addEventListener("resize", fit);
+applyDim();
+</script>
+</body>
+</html>

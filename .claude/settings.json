@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__trello__trelloReadMember",
+      "mcp__trello__trelloReadWorkspace",
+      "mcp__trello__trelloReadBoard",
+      "mcp__trello__trelloReadList",
+      "mcp__trello__trelloReadCard",
+      "mcp__trello__trelloReadChecklist",
+      "mcp__trello__trelloReadInbox",
+      "mcp__trello__trelloReadPlanner",
+
+      "mcp__figma__get_design_context",
+      "mcp__figma__get_metadata",
+      "mcp__figma__get_screenshot",
+      "mcp__figma__get_variable_defs",
+      "mcp__figma__get_code_connect_map",
+      "mcp__figma__search_design_system",
+
+      "Write(.claude/card-board/**)",
+      "Edit(.claude/card-board/**)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr merge:*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "mcp__figma__use_figma",
+      "mcp__figma__upload_assets",
+      "mcp__figma__create_new_file"
+    ]
+  }
+}
